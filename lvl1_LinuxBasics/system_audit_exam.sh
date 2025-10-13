@@ -12,8 +12,9 @@ add_header() {
 
 # 1. Preparing the environment
 echo "=== Preparing Environment ==="
-AUDIT_DIR="$HOME/exam_results/audit"
-BACKUP_DIR="$HOME/exam_results/audit_before_deletions"
+SCRIPT_DIR="$(pwd)"
+AUDIT_DIR="$SCRIPT_DIR/exam_results/audit"
+BACKUP_DIR="$SCRIPT_DIR/exam_results/audit_before_deletions"
 
 # Create audit directory
 mkdir -p "$AUDIT_DIR"
@@ -99,8 +100,8 @@ find . -maxdepth 1 -type f ! -name "hosts_perm.txt" ! -name "notes.txt" -exec rm
 
 # Create zip archive
 echo "=== Creating Archive ==="
-cd "$HOME/exam_results"
-zip -r "audit_$(date +%Y%m%d_%H%M%S).zip" "audit/"
+cd "$SCRIPT_DIR/exam_results"
+zip -r "audit_kianoush_azarnia.zip" "../system_audit_exam.sh" "audit/"
 
 echo "=== Audit Completed Successfully ==="
 echo "Results saved in: $AUDIT_DIR"
