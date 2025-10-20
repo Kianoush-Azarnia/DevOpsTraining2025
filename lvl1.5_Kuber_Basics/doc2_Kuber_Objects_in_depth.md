@@ -42,22 +42,32 @@ With “X is a Kubernetes object that …” and then dive into the deep mapping
 
 # 1 — What is a Node?
 
-**Short:** A Node is a worker machine in Kubernetes (VM or physical) that runs pods.
-**System-level view / final reality:** a Node is a Linux host (processes & files) with kubelet (a process), container runtime (containerd, runc), CNI plugin processes, systemd unit(s), and various directories under `/var/lib/kubelet`, `/var/run`, `/etc/kubernetes`. The Node’s “Kubernetes identity” is mostly metadata in the API server backed by etcd, but at runtime the real work happens in host-level processes, network namespaces, cgroups, and files.
+**Short:** A Node is a worker machine in Kubernetes (VM or physical) that runs pods.  <br>
+**System-level view / final reality:** 
+- a Node is a Linux host (processes & files) 
+  - with kubelet (a process) 
+  - container runtime (containerd, runc) 
+  - CNI ([Container Network Interface](https://www.tigera.io/learn/guides/kubernetes-networking/kubernetes-cni/)) plugin processes 
+  - systemd unit(s)  
+  - and various directories under 
+    - `/var/lib/kubelet` 
+    - `/var/run` 
+    - `/etc/kubernetes` 
+The Node’s “Kubernetes identity” is mostly metadata in the API server backed by `etcd`, but at runtime the real work happens in host-level `processes`, `network namespaces`, `cgroups`, and `files`.
 
 **Components & responsibilities (high level):**
 
-* `kubelet` (process on the node): watches the API server for pods assigned to this node, creates containers via CRI, mounts volumes, manages pod lifecycle, reports status to API server.
-* Container runtime (containerd + runc): implements containers as Linux processes using namespaces and cgroups.
-* CNI plugin (bridge, calico/flip/flannel): sets up pod networking (veth pairs, veth<>bridge, routes, iptables rules).
-* kube-proxy (daemon on node or as pod): implements Services (iptables/ipvs rules or userspace proxy).
-* kubelet volume plugin/CNI/CIFS drivers/CSI/other drivers: interact with kernel and disk.
+* `kubelet` (process on the node): watches the `API server` for pods assigned to this node, creates containers via [CRI](<https://kubernetes.io/docs/concepts/architecture/cri/#:~:text=The%20Container%20Runtime%20Interface%20(CRI,components%20kubelet%20and%20container%20runtime.>), mounts volumes, manages pod lifecycle, reports status to API server.
+* Container runtime (`containerd` + `runc`): implements containers as Linux processes using [namespaces](https://www.vmware.com/topics/kubernetes-namespace#:~:text=Namespaces%20are%20a%20way%20to,projects%20share%20a%20Kubernetes%20cluster.) [Namespace in linux wikipedia](https://en.wikipedia.org/wiki/Linux_namespaces#:~:text=Namespaces%20are%20a%20required%20aspect,type%2C%20used%20by%20all%20processes.) and [cgroups](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/resource_management_guide/chap-introduction_to_control_groups#:~:text=The%20control%20groups%2C%20abbreviated%20as,processes%20running%20on%20a%20system.).
+* `CNI` (Container Network Interface) plugin (bridge, calico/flip/flannel): sets up pod networking (veth pairs, veth<>bridge, routes, iptables rules).
+* `kube-proxy` (daemon on node or as pod): implements Services (iptables/ipvs rules or userspace proxy).
+* `kubelet volume` plugin/CNI/[CIFS](https://ambidextrous-dev.medium.com/using-cifs-volumes-in-kubernetes-d450ea1cb0e4) drivers/CSI/other drivers: interact with kernel and disk.
 
 **What gets created on Linux when a pod is scheduled to a node:**
 
-* Processes (container processes) — `runc` spawns real processes inside namespaces. Each container is one or multiple processes seen by the kernel.
-* Namespaces (PID, NET, MNT, IPC, UTS, user): Linux kernel namespaces isolate the container from the host.
-* cgroups: the container runtime places the container's processes in cgroups for resource limiting and accounting.
+* Processes (container processes) — `runc` (runC is a container runtime based on the Linux Foundation's Runtime Specification `runtime-spec`. runC is developed by the Open Container Initiative. [more](https://www.docker.com/blog/runc/)- spawns real processes inside namespaces. Each container is one or multiple processes seen by the kernel.
+* Namespaces (PID, NET, MNT, IPC, UTS, user): Linux kernel namespaces isolate the container from the host (A network namespace is a logical copy of the network stack from the host system. Network namespaces are useful for setting up containers or virtual environments. Each namespace has its own IP addresses, network interfaces, routing tables, and so forth.).
+* cgroups: the container runtime places the container's processes in cgroups for resource limiting and accounting cgroups (abbreviated from control groups) is a Linux kernel feature that limits, accounts for, and isolates the resource usage (CPU, memory, disk I/O, etc.) of a collection of processes.
 * Files and mountpoints: volumes are mounted into container mount namespaces (bind mounts, FUSE, block device mounts).
 * Network objects: veth pair, a peer in a bridge or a macvlan; routes; iptables / nftables rules; network namespace directory under `/proc/<pid>/ns/net`.
 * Files under `/var/lib/kubelet/pods/<podUID>` with pod-related volume data, pod manifests, containers’ log files (often under `/var/log/pods` or `/var/log/containers`).
@@ -65,18 +75,18 @@ With “X is a Kubernetes object that …” and then dive into the deep mapping
 **Where to look / commands:**
 
 * `kubectl get nodes` / `kubectl describe node <node>` (API layer)
-* On node: `systemctl status kubelet` / `journalctl -u kubelet -f`
+* On node: `systemctl status kubelet` / `journalctl -u kubelet -f` (Journalctl is a utility for querying and displaying logs from journald, systemd's logging service. [more](https://www.loggly.com/ultimate-guide/using-journalctl/#:~:text=Journalctl%20is%20a%20utility%20for,from%20journald%2C%20systemd's%20logging%20service.))
 * Running containers: `crictl ps` or `ctr -n k8s.io containers list` / `docker ps` (if docker)
 * Pod files: `/var/lib/kubelet/pods/` and `/var/log/pods/` (or container runtime logs)
 * Network: `ip netns`, `ip link`, `brctl show`, `iptables -t nat -L -n -v` or `ipvsadm -Ln` (if ipvs mode)
 
 ---
 
-# 2 — Control plane components (2.a, 2.b, 2.c, 2.d)
+# 2 — Control plane components
 
 ## 2.a — What are the main components of the control plane?
 
-* **kube-apiserver** — the API endpoint, the single source of truth entry point (reads/writes to etcd).
+* **kube-apiserver** — the API endpoint (An endpoint is any device that connects to a computer network. [more](https://www.cloudflare.com/learning/security/glossary/what-is-endpoint/)), the single source of truth entry point (reads/writes to `etcd`).
 * **etcd** — the persistent key-value store for cluster state (usually runs on control-plane nodes).
 * **kube-controller-manager** — a process that runs many controllers (replication, endpoints, namespace controller, service accounts...) or multiple controller manager processes; watches API and reconciles desired state.
 * **kube-scheduler** — decides which Node a newly created unscheduled pod should run on.
@@ -102,8 +112,19 @@ With “X is a Kubernetes object that …” and then dive into the deep mapping
 
 * **kube-controller-manager**
 
-  * Runs control loops for many core controllers (Node controller, ReplicationController, Deployment controllers via ReplicaSet, Service Account & Token controllers, PersistentVolume controllers, Endpoint controllers, etc.).
-  * Each controller watches resources in the API, computes diffs between desired & actual, then executes actions by talking to API server (which leads to kubelet actions via watch events).
+  * Runs control loops for many core controllers
+    - Node controller
+    - ReplicationController
+    - Deployment controllers via ReplicaSet
+    - Service Account & Token controllers
+    - PersistentVolume controllers
+    - Endpoint controllers
+    - and others ...
+  * Each controller watches 
+    - resources in the API
+    - computes diffs between desired & actual
+    - executes actions by talking to API server
+    - this leads to kubelet actions via watch events
 
 * **kube-scheduler**
 
@@ -442,4 +463,1276 @@ When your senior gives a hint like “check the host,” translate it to OS chec
 
   * Check ingress controller pods logs and their generated config files (inside controller pod or mounted config path).
   * Confirm TLS secrets are mounted as files in the ingress controller pod.
+
+10 — The Kubelet
+10.a — What is the Kubelet?
+
+Short definition:
+
+Kubelet is the node-level agent in Kubernetes.
+It runs on every node and is responsible for making the PodSpec on that node real — in other words, it watches the API for Pods assigned to its node, and ensures that the containers for those Pods are created, healthy, and match the declared spec.
+
+It’s the bridge between the Kubernetes control plane (declarative state) and the real operating system (processes, network, files, mounts, etc.).
+
+Kubelet in the Kubernetes hierarchy
+Layer	Example Component	Description
+Control plane (global desired state)	kube-apiserver, controller-manager, scheduler	Manage what “should” exist
+Node-level agent (enforces local state)	kubelet	Ensures what “should exist” actually runs on this node
+OS-level reality	containerd, cgroups, iptables, mounts, processes	The kernel-level execution of those Pods
+
+So if you think of Kubernetes as a brain–body system:
+
+The API server is the brain — it remembers what should exist.
+
+The scheduler/controller-manager are the nervous system — they send “signals” about what to create.
+
+The kubelet is the muscle — it takes those signals and performs the real physical actions on the node.
+
+What kubelet actually does
+
+Registers its node object with the API server (Node resource).
+
+Watches for Pod objects with .spec.nodeName = this node.
+
+For each pod:
+
+Pulls container images via the container runtime (via CRI).
+
+Sets up volumes and mounts (via CSI or in-tree plugins).
+
+Calls the CNI plugin to create the pod network namespace and veth pair.
+
+Starts containers via runc through the container runtime.
+
+Reports pod and node status to the API server.
+
+Periodically reports health and resource usage (CPU, memory, disk, conditions).
+
+Runs liveness/startup probes against containers (HTTP, TCP, or exec).
+
+Handles graceful termination and cleanup when pods are deleted.
+
+Kubelet = process + gRPC API + watchers
+
+It’s a systemd service or a static binary on every node (process name: kubelet).
+
+Opens ports (default 10250, 10255) — HTTP(S) endpoints for metrics, logs, exec, etc.
+
+Talks via gRPC and HTTP/2 to:
+
+API server (for objects)
+
+container runtime (CRI)
+
+CNI plugin
+
+CSI plugin
+
+Stores its local state under:
+
+/var/lib/kubelet/ — pod manifests, volume data, plugin sockets.
+
+/var/lib/kubelet/pods/<uid> — per-pod directories (volumes, secrets, etc.).
+
+/var/lib/kubelet/plugins/ — CSI driver sockets.
+
+So kubelet is itself just one long-running Linux process that keeps the node converged with what’s in etcd via the API server.
+
+10.b — At the end, kubelet is going to do what with other Kubernetes and Linux objects? Will it itself turn into Linux processes as well?
+
+Yes — kubelet itself is a Linux process, and it creates and manages other Linux processes (containers) and kernel objects.
+
+Let’s break that into two directions:
+
+(1) How kubelet itself manifests at the OS level
+
+Binary process: /usr/bin/kubelet or /usr/local/bin/kubelet
+
+System service: often managed by systemd (systemctl status kubelet)
+
+Process tree: you can see it in ps -ef | grep kubelet
+
+Open files/sockets: visible via lsof -p $(pidof kubelet); it opens sockets like:
+
+/var/lib/kubelet/device-plugins/kubelet.sock (for device plugins)
+
+/var/lib/kubelet/plugins_registry/ (for CSI driver sockets)
+
+/var/run/dockershim.sock (older CRI endpoints)
+
+/var/lib/kubelet/pod-resources/kubelet.sock (for resource reporting)
+
+Listens on ports:
+
+10250: HTTPS endpoint for API (authenticated)
+
+10255: Read-only metrics endpoint (deprecated)
+
+So the kubelet is just a user-space process that:
+
+Opens sockets
+
+Reads/writes files
+
+Executes binaries (runc, CNI, CSI)
+
+Mounts volumes (via syscalls)
+
+Forks other processes (via CRI calls to runtime)
+
+(2) What kubelet does to other Linux objects
+
+When a Pod is assigned to a node:
+
+Action	Linux effect	Performed by
+Image pull	Container image layers downloaded, stored under /var/lib/containerd/ or /var/lib/docker/ as overlayfs directories	containerd (via kubelet’s CRI call)
+Pod creation	Directory created under /var/lib/kubelet/pods/<uid>	kubelet
+Volume mount	Filesystems mounted (bind, NFS, block, tmpfs)	kubelet using CSI / OS syscalls
+Network setup	veth pairs, bridges, iptables rules	kubelet calls CNI plugin binaries (real processes)
+Container start	Real Linux process (runc -> clone() syscalls -> PID, namespaces, cgroups)	containerd / CRI runtime
+Probe checks	kubelet spawns short-lived processes (e.g., exec probes inside container namespaces)	kubelet
+Logs	Files written under /var/log/containers/ (symlinked from container runtime)	container runtime + kubelet
+
+So kubelet doesn’t “turn into” anything else, but it causes a whole tree of other Linux processes and kernel-level objects to appear.
+
+For example:
+
+PID 1010  /usr/bin/kubelet
+ ├─ PID 1203 /usr/bin/containerd-shim-runc-v2 -namespace k8s.io ...
+ │    └─ PID 1205 /usr/bin/runc create --bundle ...
+ │         └─ PID 1210 /usr/local/bin/python app.py   <-- actual app process
+ └─ PID 1300 /opt/cni/bin/bridge add ...
+
+
+So kubelet → containerd → runc → container processes.
+
+10.c — Which Kubernetes components are responsible for this conversion?
+
+The kubelet works at the bottom of the Kubernetes stack, but it receives its instructions from the control-plane components:
+
+Task	Kubelet interacts with	What happens
+Watch Pod assignments	kube-apiserver	Kubelet watches for Pod objects with .spec.nodeName=thisnode
+Start containers	Container Runtime (CRI) — containerd, runc, CRI-O	Kubelet sends gRPC requests: RunPodSandbox(), CreateContainer(), StartContainer()
+Configure networking	CNI plugin	Kubelet runs plugin binaries (bridge, calico, flannel) that create veth, set IP, routes, iptables
+Mount storage	CSI driver	Kubelet calls CSI gRPC endpoints to attach and mount volumes
+Update status	kube-apiserver	Kubelet PATCHes pod status objects (Ready, ContainerStatuses)
+Health and metrics	metrics-server / kube-controller-manager	Kubelet provides node metrics to metrics-server over HTTPS
+Authentication and RBAC	apiserver & controller-manager	Kubelet presents certificates and tokens issued by control plane
+
+So kubelet is the executor for the control plane’s intentions.
+The scheduler decides where a pod runs → the kubelet makes it actually run.
+
+10.d — Which Kubernetes Objects are managed by Kubelet?
+
+Kubelet manages and interacts with several Kubernetes object types, but only a subset directly.
+
+Directly managed:
+Object	What kubelet does
+Pod	Main object it enforces: creates containers, monitors health, reports status
+Node	Registers itself and updates its status (conditions, capacity, allocatable, etc.)
+Secret	Fetches and mounts as files (base64-decoded) inside pod via volumes
+ConfigMap	Fetches and mounts as files inside pod
+Volume / PVC / PV	Mounts and unmounts volumes (via CSI plugins); handles attach/detach
+ServiceAccount Token	Automatically mounts service account tokens into pods
+Probe / Liveness / Readiness	Executes probes (HTTP/TCP/exec) against containers
+Static Pods (defined via manifest files)	Reads from /etc/kubernetes/manifests/ and ensures those pods run locally, even without API server
+Indirectly interacts with:
+Object	How it interacts
+DaemonSet / Deployment / StatefulSet	Indirect — kubelet doesn’t manage them directly, but those controllers create Pod objects which kubelet executes
+CSI Driver / CNI Plugin	Kubelet calls their gRPC endpoints; they expose Unix sockets under /var/lib/kubelet/plugins/
+Service	Indirect — kubelet runs kube-proxy (which handles Services)
+NodeLease (in kube-node-lease namespace)	Kubelet updates it periodically as a heartbeat (used by control plane to detect node liveness)
+Summary table — kubelet reality check
+Concept	Description	Linux-level manifestation
+Kubelet itself	Node agent process	/usr/bin/kubelet, systemd service, PID, sockets
+Watches Pod objects	From API server via HTTPS	TCP socket connections, HTTP requests
+Creates containers	Via CRI runtime	Processes, cgroups, namespaces
+Sets up networking	Via CNI	veth pairs, bridges, iptables
+Mounts storage	Via CSI	mountpoints, device nodes
+Reports status	Writes Pod/Node status to API	HTTP requests to API server
+Static Pods	Watches manifest files	Files under /etc/kubernetes/manifests/
+Health probes	Runs commands / network checks	Temporary subprocesses, sockets
+Bonus: What happens when kubelet dies or is stopped?
+
+The kubelet process stops — no more heartbeats → Node marked NotReady.
+
+The containers (processes) keep running (they’re managed by the container runtime, not directly by kubelet).
+
+After node-monitor-grace-period, controllers mark pods as Unknown → eventually reschedule new pods elsewhere if needed.
+
+When kubelet restarts, it re-syncs state with runtime and reconciles.
+
+✅ In one sentence (your “deep” definition):
+
+Kubelet is a Linux process that acts as the node’s executor for Kubernetes; it watches the API server for Pod objects assigned to its node, and by calling container runtime, CNI, and CSI plugins through gRPC and binaries, it transforms high-level Kubernetes specifications (Pods, Volumes, ConfigMaps, Secrets) into real OS-level objects — processes, cgroups, mounts, and network interfaces — and reports their status back to the control plane through the API server.
+
+We’ve looked at the kubelet, which is the “executor” for Pods.
+Now we’ll go deep on kube-proxy, which is the “network enforcer” for Services — it’s the component that turns the idea of a Service object into real network behavior in Linux.
+
+Let’s dive in with the same deep structure and OS-level mapping.
+
+11 — kube-proxy
+11.a — What is kube-proxy?
+
+Short definition:
+
+kube-proxy is the node-level network agent that implements Kubernetes Service objects in the Linux kernel by programming iptables, ipvs, or nftables rules.
+It translates the abstract concept of “a stable virtual IP for a group of pods” into real packet routing and NAT on every node.
+
+Analogy
+
+If kubelet makes Pods exist, kube-proxy makes Pod communication possible.
+Think of it like:
+
+kubelet = spawns the containers (processes)
+kube-proxy = wires up the network between them (kernel-level routing)
+
+11.b — What kube-proxy does conceptually
+
+In Kubernetes, a Service is a logical abstraction that gives you:
+
+a stable ClusterIP (virtual IP)
+
+a port
+
+and a list of endpoint pods (the actual destinations)
+
+But Linux doesn’t know what a “Service” is — the kernel only knows about:
+
+IP addresses
+
+routing tables
+
+NAT
+
+conntrack
+
+sockets
+
+interfaces
+
+So kube-proxy’s job is:
+
+Watch the Service and Endpoints/EndpointSlices objects in the API server.
+
+For every new or updated Service, create or modify corresponding iptables/ipvs/nftables rules.
+
+Those rules catch packets destined for the Service’s ClusterIP and redirect them to one of the real Pod IPs behind it.
+
+Flow summary
+API Server (Service + EndpointSlice)
+           ↓
+       kube-proxy
+           ↓
+iptables/ipvs rules on each node
+           ↓
+Linux kernel (conntrack, NAT)
+           ↓
+Packets forwarded to pod’s real IP
+
+
+So kube-proxy doesn’t actually forward traffic itself —
+it just configures the kernel to do so.
+
+11.c — kube-proxy’s place in the architecture
+Layer	Component	Responsibility
+Control Plane	kube-apiserver	Stores and exposes Service and EndpointSlice objects
+Node Agent	kube-proxy	Watches those objects and configures local kernel routing/NAT
+Kernel / OS	Linux networking stack	Actually forwards packets according to the rules
+Where kube-proxy runs
+
+Runs as a DaemonSet (a Pod on every node)
+
+Binary: /usr/local/bin/kube-proxy
+
+Communicates with:
+
+kube-apiserver (for Service and Endpoint updates)
+
+Linux kernel (via netlink syscalls and iptables/ipvs commands)
+
+Stores config in /var/lib/kube-proxy/config.conf or ConfigMap
+
+So like kubelet, kube-proxy is a real Linux process running on each node.
+
+11.d — What kube-proxy does at the OS level
+
+Let’s see what happens step by step.
+
+Step 1 — Watches the API server
+
+Kube-proxy watches:
+
+Service objects → tells it which virtual IPs to create.
+
+EndpointSlice objects → tells it which real Pod IPs belong to each Service.
+
+Step 2 — Programs kernel rules
+
+Depending on the mode, kube-proxy uses one of these backends:
+
+Mode	Mechanism	Tools / syscalls used
+iptables (legacy)	Creates chains and NAT rules for each Service and Endpoint	iptables-restore, /proc/net/ip_tables_names
+ipvs (modern)	Creates virtual services with real backend servers	/proc/net/ip_vs, ipvsadm via netlink
+userspace (deprecated)	Proxy process listens on Service IP and forwards manually	TCP/UDP sockets in user space
+Step 3 — Kernel handles the traffic
+
+When a packet arrives:
+
+Example: ClusterIP Service
+Client pod → ClusterIP (10.96.0.5:80)
+→ kernel hits iptables NAT rule
+→ destination rewritten to PodIP (10.244.1.23:8080)
+→ conntrack table remembers mapping
+→ packet delivered to pod via CNI interface
+
+
+So the kernel-level NAT tables do the actual load-balancing and forwarding — not kube-proxy itself.
+
+Example: NodePort Service
+External client → NodeIP:30000
+→ kernel iptables prerouting rule → translate to PodIP:8080
+→ conntrack manages session
+
+Example: ExternalName Service
+
+kube-proxy doesn’t create iptables rules — DNS resolves it to an external hostname.
+
+Step 4 — Clean up
+
+When a Service or Endpoint is deleted, kube-proxy removes the associated kernel rules.
+
+11.e — Linux-level view of kube-proxy
+
+You can see kube-proxy’s work with Linux tools.
+
+Tool	What it shows
+`ps aux	grep kube-proxy`
+sudo iptables -t nat -L -n -v	Lists NAT rules that kube-proxy installed
+cat /proc/net/ip_vs	Lists ipvs services if running in IPVS mode
+ss -ltnp or netstat	Shows listening sockets (only in userspace mode)
+conntrack -L	Shows active NAT connections handled by kernel
+iptables mode example
+# Example chain created by kube-proxy:
+Chain KUBE-SERVICES (2 references)
+target         prot opt source      destination
+KUBE-SVC-XYZ   tcp  --  0.0.0.0/0   10.96.0.5  /* my-service:80 clusterIP */ tcp dpt:80
+
+Chain KUBE-SVC-XYZ
+target          prot opt source      destination
+KUBE-SEP-ABCDEF tcp  --  0.0.0.0/0   10.244.1.23 /* pod endpoint */ tcp dpt:8080
+
+
+So, a packet to 10.96.0.5:80 gets DNAT’d to 10.244.1.23:8080.
+
+ipvs mode example
+# cat /proc/net/ip_vs
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port Forward Weight ActiveConn InActConn
+TCP  10.96.0.5:80 rr
+  -> 10.244.1.23:8080 Masq 1 0 0
+  -> 10.244.2.15:8080 Masq 1 0 0
+
+
+That’s kube-proxy telling the kernel to load-balance between those pod IPs using the IPVS subsystem (like an L4 load balancer inside the kernel).
+
+11.f — Which Kubernetes components does kube-proxy interact with?
+Component	Purpose
+kube-apiserver	Watch Service and EndpointSlice objects
+kubelet	(Indirectly) because kubelet creates pods that become endpoints
+CoreDNS	Works together for ClusterIP name resolution (DNS + routing)
+Linux kernel	Installs iptables/ipvs rules via syscalls
+conntrack	Tracks ongoing network connections
+11.g — Which Kubernetes Objects does kube-proxy manage or depend on?
+Object	Role
+Service	Primary — defines ClusterIP, ports, selector
+EndpointSlice	Holds the real Pod IPs for each Service
+Node	kube-proxy runs on each Node
+Pod	Not directly managed, but endpoints refer to pods
+ConfigMap (kube-proxy config)	Holds mode and parameters (/etc/kubernetes/kube-proxy-config.yaml)
+11.h — OS-level summary (what’s real vs abstract)
+Kubernetes abstraction	kube-proxy’s action	Real Linux artifact
+Service (ClusterIP)	Creates iptables/ipvs rules	NAT and routing entries in kernel
+EndpointSlice	Maps service → pod IPs	DNAT entries or ipvs backend list
+NodePort	Adds host port rule	iptables PREROUTING rule on eth0
+ExternalName	No rule, handled by DNS	DNS A/alias record
+kube-proxy Pod	Runs on node	Linux process (/usr/local/bin/kube-proxy)
+kube-proxy configuration	Watched by process	Files under /var/lib/kube-proxy/
+
+So, again, the only “real” things are:
+
+Processes (kube-proxy, iptables, kernel threads)
+
+Files (/proc/net/ip_tables_names, /var/lib/kube-proxy)
+
+Network interfaces (veth, bridges)
+
+Kernel tables (NAT, ipvs, conntrack)
+
+Everything else (Service, Endpoint) is just YAML → API object → translated into kernel reality.
+
+11.i — What happens if kube-proxy dies?
+
+Existing iptables/ipvs rules remain — kernel keeps forwarding packets.
+
+But new Services or Endpoints won’t update (rules become stale).
+
+Once kube-proxy restarts, it re-syncs and reconciles the tables.
+
+✅ In one deep sentence:
+
+kube-proxy is a Linux process that watches Service and EndpointSlice objects from the API server and translates them into kernel-level NAT and routing rules using iptables, ipvs, or nftables; it never forwards traffic itself, but by configuring the kernel’s network stack, it turns abstract Kubernetes Services into real packet paths between processes — the ultimate bridge from YAML to IP packets.
+
+You’ve now seen how kubelet (executes pods) and kube-proxy (routes traffic) act on each node.
+
+Now let’s move up to the control plane and look at one of the most intelligent components — the kube-scheduler — the brain that decides where pods should run before kubelet executes them.
+
+We’ll go through this in the same deep “concept → mechanism → OS reality” style.
+
+12 — kube-scheduler
+12.a — What is the kube-scheduler?
+
+Short definition:
+
+kube-scheduler is a control-plane component that watches for Pods without a .spec.nodeName and decides on which node they should run.
+It’s responsible for the placement logic — matching pods to nodes according to constraints, resource availability, and scheduling policies.
+
+It doesn’t run any pods itself; it just writes the decision (.spec.nodeName) into the Pod object in etcd through the API server.
+
+After that, the kubelet on that chosen node takes over and makes it real.
+
+Analogy:
+
+If you think of Kubernetes as a restaurant:
+
+The API server is the waiter (takes the order — Pod spec)
+
+The scheduler is the manager (decides which chef should cook it — Node)
+
+The kubelet is the chef (actually cooks it — spawns containers)
+
+The container runtime is the stove (executes the process)
+
+12.b — kube-scheduler’s role in the control plane
+Layer	Component	Role
+Declarative API	kube-apiserver	Receives YAML, stores objects
+Decision logic	kube-scheduler	Decides which node should run the pod
+Execution	kubelet	Creates containers, mounts, networking
+Observation	controller-manager	Ensures replicas, scaling, etc.
+12.c — What kube-scheduler actually does
+
+Let’s go step by step, following a real pod’s lifecycle.
+
+Step 1 — Pod creation
+
+A user (or controller like a Deployment) creates a Pod object.
+At this point, .spec.nodeName is empty, meaning it’s unscheduled.
+
+Step 2 — Scheduler watches API
+
+kube-scheduler continuously watches the API server for any Pods where:
+
+.spec.nodeName == null
+
+Step 3 — Filtering (a.k.a. Predicates)
+
+The scheduler filters all nodes to find where this pod can run.
+It evaluates:
+
+Node taints and tolerations
+
+Node selectors and affinity/anti-affinity
+
+Resource requests (CPU, memory)
+
+Volume attach limits
+
+Node conditions (Ready, DiskPressure, NetworkUnavailable)
+
+Custom scheduling plugins (via scheduler framework)
+
+After filtering, it gets a subset of eligible nodes.
+
+Step 4 — Scoring
+
+For each eligible node, the scheduler assigns a score based on:
+
+Free CPU/memory
+
+Pod affinity rules
+
+Spread constraints
+
+Node labels or topology
+
+Image locality (if already cached)
+
+Scores are normalized, and the node with the highest total wins.
+
+Step 5 — Binding
+
+The scheduler doesn’t directly tell kubelet — instead, it makes a small API call:
+
+POST /api/v1/namespaces/<ns>/pods/<podname>/binding
+
+
+with:
+
+target:
+  kind: Node
+  name: node-xyz
+
+
+This updates .spec.nodeName = "node-xyz" in etcd (through the API server).
+
+Step 6 — Handoff
+
+Now that the Pod is bound, the kubelet on node-xyz sees it (because it watches for pods assigned to it) and proceeds to actually create the containers.
+
+So, scheduler’s job is complete at that moment — it’s purely a decision-maker.
+
+12.d — What kube-scheduler is at the OS level
+
+Let’s map it down to Linux.
+
+Level	Entity	Reality
+Kubernetes concept	kube-scheduler	Binary process (/usr/local/bin/kube-scheduler)
+Deployment type	Control-plane Pod (in kube-system namespace)	A real Pod running on a control-plane node
+Process	Yes	You can see it with `ps aux
+Communication	HTTPS to API server	TCP connection (port 6443 by default)
+Storage	None (stateless)	Keeps ephemeral state in memory; config in /etc/kubernetes/scheduler.conf
+Configuration	--kubeconfig, --leader-elect, --policy-config-file	Command-line flags passed to binary
+
+So it’s a single Linux process (or set of replicas for HA) that continuously performs:
+
+API calls (via TCP sockets)
+
+JSON/YAML deserialization (Pod specs)
+
+In-memory scheduling logic
+
+Writes the chosen node back (HTTP POST)
+
+It has no direct kernel-level side effects — no mounts, iptables, or processes — because it doesn’t run workloads.
+Its output is purely metadata updates in the cluster database (etcd).
+
+12.e — kube-scheduler’s input and output
+Input	Source	Description
+Pod (unscheduled)	kube-apiserver	The request to place something
+Node list	kube-apiserver	The possible destinations
+Node metrics	kubelet via API	Used for scoring
+Affinity / Taints	Pod spec + Node labels	Used for filtering
+Output	Destination	Description
+Binding API call	kube-apiserver	Sets .spec.nodeName
+Events	kube-apiserver	Records scheduling decisions and failures
+12.f — Who runs and manages kube-scheduler
+
+Typically:
+
+It’s run as a static pod by the kubelet on the control-plane node.
+
+The manifest file is usually at:
+
+/etc/kubernetes/manifests/kube-scheduler.yaml
+
+
+(so kubelet restarts it automatically if it dies)
+
+The image is k8s.gcr.io/kube-scheduler:<version> or registry.k8s.io/kube-scheduler.
+
+So kubelet on the master node manages kube-scheduler as a Pod — which means the scheduler itself is subject to the same lifecycle management as any other workload.
+
+12.g — kube-scheduler and other components
+Component	Interaction
+kube-apiserver	Scheduler watches Pods and Nodes via the API, writes back bindings
+etcd	Indirect — scheduler never talks to etcd directly, only through the API server
+kube-controller-manager	Works alongside scheduler (controllers create Pods; scheduler places them)
+kubelet	Indirect — executes Pods once bound to its node
+metrics-server	Provides optional metrics for scoring decisions (CPU/mem utilization)
+12.h — kube-scheduler and OS-level reality
+
+If you strip away all the Kubernetes abstractions, here’s what’s real in Linux when kube-scheduler runs:
+
+Real artifact	Example / Path	Purpose
+Process	/usr/local/bin/kube-scheduler	Main binary
+Sockets	TCP connection to API server (port 6443)	Watches Pods/Nodes
+Files	/etc/kubernetes/scheduler.conf	kubeconfig
+Logs	/var/log/kube-scheduler.log (or stdout in pod)	Activity logs
+Memory structures	In-process cache of nodes/pods	Scheduling algorithms
+System calls	connect(), read(), write()	HTTP communication
+
+So it’s purely user-space computation — no syscalls like mount, clone, or iptables.
+Its main “real-world” activity is network I/O and CPU cycles for running the scheduling algorithms.
+
+12.i — kube-scheduler and the bigger system
+
+Think of the Kubernetes ecosystem as a state machine that constantly moves the system from desired → actual:
+
+Stage	Component	From	To	Real-world effect
+Declarative spec	User → API server	YAML → etcd	Data in database	
+Decision	Scheduler	Pod (unbound) → Pod (bound to node)	Metadata update	
+Execution	Kubelet + CRI	Pod (bound) → running containers	Real Linux processes	
+Networking	Kube-proxy	Service → iptables rules	Kernel packet routing	
+
+So kube-scheduler’s position is: the moment before reality begins — it’s the last pure decision-making step before kubelet creates actual processes.
+
+12.j — Example flow with real effects
+
+Let’s trace a real example:
+
+You apply:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  containers:
+    - name: nginx
+      image: nginx
+
+
+The API server stores the Pod in etcd — no node assigned.
+
+kube-scheduler sees it and evaluates:
+
+Nodes A, B, C
+
+Node B has least load → pick Node B
+
+kube-scheduler sends:
+
+spec:
+  nodeName: node-b
+
+
+(binding request)
+
+kubelet on Node B detects it via watch, creates containers.
+
+Now Linux reality appears:
+
+containerd starts nginx process
+
+veth pairs, cgroups, mounts created
+
+network rules set up by CNI
+
+So kube-scheduler never touches the kernel — it just triggers others to do it.
+
+12.k — Logs and troubleshooting
+
+You can check scheduler logs in:
+
+kubectl logs -n kube-system kube-scheduler-<hostname>
+
+
+Look for lines like:
+
+I1019 09:23:45.512] Successfully bound pod "nginx" to "node-b"
+I1019 09:23:45.512] Evaluated 3 nodes, 2 filtered, 1 feasible
+
+12.l — Bonus: Scheduler plugins and extensions
+
+Modern kube-scheduler is extensible via the Scheduling Framework, where you can add:
+
+Filter plugins (custom node eligibility)
+
+Score plugins (custom scoring logic)
+
+Bind plugins (custom binding logic)
+
+Reserve / PreBind / PostBind hooks
+
+These run inside the same process, exposing extension points for advanced scheduling (e.g., topology-aware scheduling, GPU, affinity rules).
+
+✅ In one deep sentence:
+
+kube-scheduler is a control-plane process that continuously watches for unscheduled Pods in the API server, evaluates all cluster Nodes against resource, policy, and affinity constraints, computes the most suitable node through filtering and scoring algorithms, and binds the Pod by writing .spec.nodeName — thus transforming a high-level “desired workload” into a precise execution target; it never touches containers or kernel resources itself but acts as the logical bridge between the declarative API and the node-level executors (kubelets).
+
+Now the most powerful brains of Kubernetes — the one that keeps everything alive, self-healing, and automated.
+
+If the scheduler decides where things go, then the controller-manager decides what things should exist and keeps them existing.
+
+Let’s go deep in the same structured “concept → logic → Linux reality” way again 👇
+
+13 — kube-controller-manager
+13.a — What is the kube-controller-manager?
+
+Short definition:
+
+The kube-controller-manager is a control-plane component that runs a collection of controllers — each one is a small control loop responsible for maintaining a specific part of cluster state.
+
+It continuously watches the desired state (from etcd via the API server) and compares it with the current state (from the cluster).
+If something drifts out of sync, it acts to fix it automatically — by creating, updating, or deleting Kubernetes objects.
+
+Analogy:
+
+Think of Kubernetes as an autopilot system:
+
+The API server is the control panel (where you set what you want).
+
+The scheduler is the planner (decides which runway to use).
+
+The kube-controller-manager is the autopilot computer — constantly correcting the course to match your desired flight path.
+
+So when you say:
+
+“I want 3 replicas of Nginx,”
+the controller-manager makes sure there are always exactly 3, even if one crashes.
+
+13.b — What actually is a controller?
+
+Each controller is just a loop that does this over and over:
+
+Observe → Read current state from the API (through watches)
+
+Compare → Check if current state == desired state
+
+Act → If not equal, make API calls to change it
+
+Example (simplified pseudo-code):
+
+while True:
+    desired = get("ReplicaSet.spec.replicas")
+    current = count("Pods with owner=ReplicaSet")
+    if current < desired:
+        create_pod()
+    elif current > desired:
+        delete_pod()
+    sleep(5)
+
+
+This pattern is everywhere in Kubernetes — it’s called the controller pattern.
+
+13.c — What controllers exist inside kube-controller-manager?
+
+The kube-controller-manager process actually contains many controllers running as goroutines inside one binary.
+Some of the most important ones are:
+
+Controller	What it manages	What it ensures
+Node Controller	Node objects	Marks Nodes as “NotReady” if unreachable
+Replication Controller	ReplicaSets / Pods	Maintains correct Pod count
+Deployment Controller	Deployments	Manages rolling updates & ReplicaSets
+Endpoints Controller	Services & Pods	Keeps Service endpoints in sync
+Service Account Controller	ServiceAccounts	Manages default service accounts
+Namespace Controller	Namespaces	Cleans up objects when a namespace is deleted
+PersistentVolume Controller	PVs and PVCs	Binds claims to volumes
+Job / CronJob Controller	Jobs / CronJobs	Ensures jobs run to completion
+DaemonSet Controller	DaemonSets	Runs pods on every node
+ReplicaSet Controller	ReplicaSets	Ensures replicas exist
+HorizontalPodAutoscaler	HPA	Adjusts replicas based on metrics
+
+…and many more (over 40 small controllers in total).
+
+Each one has its own control loop logic — all running inside a single process for simplicity.
+
+13.d — kube-controller-manager’s role in the control plane
+
+Here’s where it sits logically:
+
+Layer	Component	Function
+API + DB	kube-apiserver + etcd	Cluster’s source of truth
+Decision logic	kube-scheduler	Chooses where Pods go
+Reconciliation logic	kube-controller-manager	Ensures what exists stays as declared
+Execution	kubelet	Actually runs the containers
+
+So the controller-manager doesn’t start or schedule pods directly — it simply ensures the declarations in etcd are realized by other components.
+
+13.e — Example: Deployment Controller in action
+
+Let’s trace a real scenario 👇
+
+You apply:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deploy
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+
+
+The API server stores the Deployment in etcd.
+
+The Deployment Controller (inside kube-controller-manager) notices a new Deployment →
+It creates a ReplicaSet object with replicas: 3.
+
+The ReplicaSet Controller (also inside kube-controller-manager) notices the new ReplicaSet →
+It creates 3 Pods.
+
+The Scheduler binds those Pods to nodes.
+
+The Kubelet runs them as containers.
+
+So, the controller-manager created all the “intermediate” objects automatically — you didn’t manually create ReplicaSets or Pods.
+That’s reconciliation in action.
+
+13.f — Who runs and manages kube-controller-manager?
+
+Just like the scheduler, the controller-manager usually runs as a static pod on the control-plane node.
+
+File location:
+
+/etc/kubernetes/manifests/kube-controller-manager.yaml
+
+
+That manifest is watched by the kubelet on the control-plane node, so if the process crashes, kubelet restarts it.
+
+The binary itself:
+
+/usr/local/bin/kube-controller-manager
+
+
+It’s launched with flags like:
+
+--kubeconfig=/etc/kubernetes/controller-manager.conf
+--leader-elect=true
+--controllers=*,bootstrapsigner,tokencleaner
+
+13.g — At the OS level
+Level	Entity	Linux reality
+Kubernetes concept	kube-controller-manager	A control-plane Pod
+Execution	Static pod managed by kubelet	Real process on master node
+Process	/usr/local/bin/kube-controller-manager	Seen via ps aux
+Network	HTTPS to API server	TCP socket connection
+Data	Watches, caches	In-memory state
+Storage	None persistent	All state is in etcd
+
+So just like the scheduler, it’s purely user-space logic — no direct kernel-level effects.
+It’s a brain that uses API calls as its hands.
+
+13.h — Which Kubernetes objects does kube-controller-manager manage?
+
+Here’s a big-picture table 👇
+
+Object	Responsible Controller	Goal
+Pod	ReplicaSet / DaemonSet / Job controllers	Ensure the right number and placement
+Node	Node Controller	Update node status, evict pods if dead
+Service	Endpoints Controller	Keep endpoints up-to-date
+Namespace	Namespace Controller	Delete dependents
+PersistentVolumeClaim	PV Controller	Bind to a matching PV
+ServiceAccount / Token	ServiceAccount Controller	Generate tokens
+Deployment	Deployment Controller	Manage ReplicaSets & rollout
+Job / CronJob	Job Controller	Create Pods for batch jobs
+HPA / VPA	Autoscaler controllers	Scale workloads
+
+In short:
+→ Every high-level Kubernetes object has a corresponding controller loop somewhere — and most of them live inside the kube-controller-manager.
+
+13.i — How controllers communicate
+
+All controllers inside kube-controller-manager talk only through the API server — never directly with kubelet or etcd.
+
+For example:
+
+They watch objects (Pods, Nodes, PVs) via the API.
+
+They POST/PUT updates (like new Pods, ReplicaSets, etc.)
+
+API server handles persistence in etcd.
+
+That makes them loosely coupled — you can restart one controller without breaking the others.
+
+13.j — Self-healing behavior
+
+This is the essence of Kubernetes.
+
+If a Pod crashes:
+
+The kubelet removes it.
+
+The ReplicaSet Controller notices fewer Pods than desired.
+
+It creates a new Pod (API call).
+
+The Scheduler binds it.
+
+The Kubelet starts it.
+
+→ No human intervention needed.
+
+That’s the controller-manager constantly bringing the system back into equilibrium — what we call reconciliation.
+
+13.k — Logs and troubleshooting
+
+To see what controllers are doing:
+
+kubectl logs -n kube-system kube-controller-manager-<hostname>
+
+
+You’ll see entries like:
+
+I1019 10:15:33] Created pod: nginx-deploy-7f9dfd
+I1019 10:15:34] Deleted pod: nginx-deploy-7f9dfd-old
+I1019 10:15:40] Node node-2 notReady for 40s, marking unschedulable
+
+
+You can also check the list of running controllers via:
+
+kubectl get pods -n kube-system | grep controller
+
+13.l — Relation to other components
+Component	Relation
+kube-apiserver	Main interface — watches & updates objects
+etcd	Indirect storage (through API server)
+kube-scheduler	Works after controllers create Pods
+kubelet	Executes Pods once scheduled
+cloud-controller-manager	Manages cloud resources (LoadBalancers, etc.) — separate process in cloud clusters
+13.m — OS and network view
+
+If you inspect a real control-plane node:
+
+ps aux | grep kube-controller-manager
+
+
+you’ll see something like:
+
+root  2736  2.4  0.9  184532  61234 ?  Ssl  Oct19  1:02  /usr/local/bin/kube-controller-manager --kubeconfig=/etc/kubernetes/controller-manager.conf
+
+
+And network sockets:
+
+netstat -ntp | grep 2736
+
+
+showing it talking to the API server at 127.0.0.1:6443.
+
+So the only real activity is network I/O and JSON processing — it’s like a daemon running hundreds of small reconciliation loops in user space.
+
+✅ In one deep sentence:
+
+kube-controller-manager is a control-plane process that hosts a suite of independent control loops (“controllers”), each continuously reconciling the actual state of Kubernetes objects toward their desired state by observing cluster data through the API server and performing corrective actions (like creating Pods, updating endpoints, or cleaning namespaces); it never directly touches containers or nodes but orchestrates all other components by declarative intent, ensuring the cluster remains self-healing and consistent over time.
+
+Now the beating heart of Kubernetes — the kube-apiserver ❤️‍🔥
+
+If kubelet runs the containers, scheduler decides where to place them, and controller-manager keeps them alive —
+then the API server is what connects all of them together.
+It’s the only doorway to the cluster’s state and the only brain that talks to etcd directly.
+
+We’ll unpack it with the same depth as before — from abstract concepts all the way down to Linux files, sockets, and syscalls.
+
+14 — kube-apiserver
+14.a — What is the kube-apiserver?
+
+Short definition:
+
+The kube-apiserver is the central API gateway and state manager of Kubernetes.
+It exposes a RESTful HTTP API (/api, /apis) that all other components — kubectl, kubelet, scheduler, controller-manager, and even other Pods — use to interact with the cluster.
+It validates, authenticates, authorizes, and persists every object in Kubernetes via etcd.
+
+Analogy
+
+Think of Kubernetes as a living organism:
+
+kube-apiserver = the central nervous system (everything communicates through it)
+
+etcd = the memory (stores the truth)
+
+controllers and schedulers = reflexes and motor neurons (decide and act)
+
+kubelet = the muscles (executes work on the body — the nodes)
+
+No one talks directly to etcd except kube-apiserver.
+If kube-apiserver is down → the entire control plane goes silent.
+
+14.b — Responsibilities
+
+Let’s break its key responsibilities in detail 👇
+
+Responsibility	Description
+1. REST API gateway	Serves the Kubernetes API (HTTP + JSON + gRPC). Every CLI command (kubectl get pods) and internal controller communication goes through it.
+2. Authentication	Verifies the identity of the caller using tokens, client certs, or service accounts.
+3. Authorization	Checks if the authenticated user can perform the requested action (RBAC, ABAC, Node, Webhook modes).
+4. Admission control	Runs mutating/validating webhooks and admission plugins before persisting the object.
+5. Validation	Ensures objects are structurally and semantically correct before storing them.
+6. API aggregation	Serves custom APIs and CRDs under /apis via the API Aggregation Layer.
+7. Persistence	Stores cluster state in etcd (all YAMLs, statuses, secrets, etc.).
+8. Watch mechanism	Notifies clients (controllers, kubelets, etc.) of object changes in real-time using HTTP watches.
+9. Versioning and conversion	Manages multiple API versions (v1, v1beta1, etc.) and converts between them.
+
+Everything in Kubernetes — from kubectl apply to autoscaling — flows through these nine mechanisms.
+
+14.c — kube-apiserver workflow (step-by-step)
+
+Let’s take a single request as an example:
+
+Example:
+kubectl create -f pod.yaml
+
+Step 1 — kubectl sends an HTTPS request
+
+→ to the kube-apiserver endpoint (default: https://<control-plane>:6443)
+
+POST /api/v1/namespaces/default/pods
+Content-Type: application/json
+Authorization: Bearer <token>
+Body: { "apiVersion": "v1", "kind": "Pod", ... }
+
+Step 2 — Authentication
+
+kube-apiserver validates the caller:
+
+Client certs → via kubeconfig
+
+Bearer token → via service account or static token
+
+Webhook auth → via external identity provider
+
+Step 3 — Authorization
+
+Checks if the user is allowed to perform this action (via RBAC).
+
+If allowed → proceed.
+
+Step 4 — Admission control
+
+Passes through a chain of admission plugins, for example:
+
+NamespaceLifecycle
+
+LimitRanger
+
+DefaultStorageClass
+
+MutatingWebhook
+
+ValidatingWebhook
+
+Some mutate the object (e.g., inject sidecars), some validate it (e.g., enforce Pod security).
+
+Step 5 — Object validation
+
+Schema validation using OpenAPI and internal type structs.
+
+Step 6 — Persistence
+
+Converts the JSON into Go structs → serializes → stores it in etcd as a key-value pair.
+
+/registry/pods/default/my-pod → serialized Pod object
+
+Step 7 — Notification (Watch)
+
+All interested controllers (scheduler, kubelet, etc.) that are watching /api/v1/pods get a notification that a new Pod appeared.
+
+Step 8 — Response
+
+Returns 201 Created to the client with the object in the response.
+
+14.d — Real relationship between kube-apiserver and etcd
+
+At the OS and process level:
+
+kube-apiserver connects to etcd via gRPC over HTTPS
+
+Configuration:
+/etc/kubernetes/manifests/kube-apiserver.yaml
+→ has --etcd-servers=https://127.0.0.1:2379
+
+Each write is a transaction in etcd’s Raft-based store.
+
+Every Kubernetes object corresponds to a key in etcd under /registry/<resource>.
+
+Example (if you dump etcd):
+
+/registry/pods/default/nginx-pod
+/registry/deployments/default/frontend
+/registry/services/default/backend
+
+
+→ The API server is the only process that encodes/decodes and manipulates this data.
+→ No other component should ever talk to etcd directly.
+
+14.e — Which Linux objects are involved?
+
+At the lowest level:
+
+Component	Linux Reality
+kube-apiserver	Real process (/usr/local/bin/kube-apiserver)
+API endpoint	TCP socket listening on port 6443
+Data store	Network connection to etcd (port 2379)
+TLS certs	Files in /etc/kubernetes/pki/
+Admission webhooks	HTTPS connections to webhook Pods or services
+Logs	/var/log/kube-apiserver.log or Pod logs in kube-system
+
+So the “real” things are:
+
+Processes
+
+Files
+
+TLS sockets
+
+HTTP requests
+
+etcd key-value entries
+
+All YAML objects you write (Pods, Services, CRDs) become serialized files in etcd, stored as bytes.
+
+14.f — What happens when kube-apiserver runs
+
+The kubelet on the control-plane node runs it as a static pod (like other control-plane components).
+
+Manifest:
+
+/etc/kubernetes/manifests/kube-apiserver.yaml
+
+
+This pod runs the container:
+
+image: k8s.gcr.io/kube-apiserver:v1.xx.x
+command:
+  - kube-apiserver
+  - --etcd-servers=https://127.0.0.1:2379
+  - --secure-port=6443
+  - --service-account-key-file=/etc/kubernetes/pki/sa.pub
+  - --client-ca-file=/etc/kubernetes/pki/ca.crt
+
+
+At runtime, you can verify:
+
+ps aux | grep kube-apiserver
+netstat -tnlp | grep 6443
+
+14.g — Which components talk to the kube-apiserver?
+
+Everything.
+
+Component	How it uses the API
+kubectl	CLI client over HTTPS
+kubelet	Registers nodes, reports Pod status, retrieves Pod specs
+kube-scheduler	Watches unassigned Pods, writes binding decisions
+kube-controller-manager	Watches objects, creates new ones
+kube-proxy	Watches Services & Endpoints
+CoreDNS	Reads ConfigMaps and Services
+Webhooks & Operators	Register CRDs and admission hooks
+Custom Controllers (CRDs)	Use same watch mechanism
+Metrics-server / Prometheus	Query metrics endpoints
+
+So it’s the single source of truth and single point of communication for the entire cluster.
+
+14.h — Watch mechanism (OS perspective)
+
+This is how controllers and kubelets “react instantly” to changes.
+
+Under the hood:
+
+Clients issue an HTTP GET request with ?watch=true
+
+kube-apiserver holds the connection open (long-lived HTTP stream)
+
+When an object changes, kube-apiserver pushes an event down that stream
+
+This is implemented via Go channels + JSON streaming — not raw kernel-level sockets, but standard TCP HTTP responses.
+
+At the system level:
+
+A kube-controller-manager process maintains many long-lived TCP connections to kube-apiserver
+
+kube-apiserver multiplexes them efficiently using Go’s goroutines and epoll under the hood
+
+So, again — no magic — just processes, sockets, JSON, and file descriptors.
+
+14.i — Authentication and Authorization mechanisms
+
+Kube-apiserver can use multiple layers together:
+
+Authentication plugins
+
+Client certificate (--client-ca-file)
+
+Bearer token
+
+Bootstrap tokens
+
+ServiceAccount JWT
+
+Webhook or OIDC
+
+Authorization plugins
+
+Node (for kubelet)
+
+ABAC (deprecated)
+
+RBAC (mainstream)
+
+Webhook
+
+Admission
+
+Runs webhook controllers or built-in mutators
+
+Example: inject sidecars (Istio), enforce quotas, set defaults
+
+These layers form the security pipeline of every request.
+
+14.j — API Aggregation Layer and CRDs
+
+Kube-apiserver can extend itself:
+
+API Aggregation Layer → allows new API services (like metrics-server) to appear under /apis/metrics.k8s.io
+
+CRDs (CustomResourceDefinitions) → let you define new object types (e.g., MyApp, DatabaseBackup)
+
+In both cases, the kube-apiserver handles them just like built-in objects:
+
+Validates
+
+Stores in etcd
+
+Exposes via REST
+
+That’s how Kubernetes stays extensible.
+
+14.k — Logging, monitoring, and audit
+View logs:
+kubectl logs -n kube-system kube-apiserver-<node>
+
+Audit logs:
+
+Kube-apiserver can generate audit logs for every request:
+
+Configured via --audit-policy-file
+
+Stored in /var/log/kubernetes/audit.log
+
+Audit logs contain:
+
+{
+  "kind": "Event",
+  "user": "system:kube-scheduler",
+  "verb": "update",
+  "objectRef": { "resource": "pods", "name": "nginx" },
+  "stage": "ResponseComplete",
+  "responseStatus": { "code": 200 }
+}
+
+
+So the audit log lives with the kube-apiserver pod —
+it’s the one that sees every API call.
+
+14.l — OS-level summary (what’s real)
+Kubernetes abstraction	kube-apiserver’s concrete action	Real Linux artifact
+kubectl apply	HTTP POST request	TCP socket + HTTPS
+Pod YAML	JSON payload	Serialized key in etcd
+RBAC rule	Validation logic	Data structure in memory
+Webhook call	Admission request	HTTPS socket
+Audit log	Log entry	File in /var/log/kubernetes/
+CRD	New REST handler	Go struct and in-memory route
+
+At the end of the day — the API server is a web server.
+It just serves JSON that defines the universe of Kubernetes.
+
+✅ In one deep sentence:
+
+kube-apiserver is the central, stateful web server of Kubernetes that validates, authenticates, and stores all cluster objects in etcd; it’s the single gateway for every component and user, exposing the declarative model through REST endpoints, performing admission and authorization, and translating YAML manifests into real persisted objects and streaming updates over TCP — the ultimate bridge between human intent and the cluster’s operational state.
+
+15 — etcd next?
+That’s the persistent memory of Kubernetes — where all your Pods, Secrets, ConfigMaps, and state actually live as serialized files — and it ties directly to the “real Linux files and processes” your senior expects you to understand.
 
