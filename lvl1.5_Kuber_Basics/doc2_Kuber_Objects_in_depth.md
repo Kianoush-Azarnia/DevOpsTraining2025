@@ -122,13 +122,17 @@ The Node’s “Kubernetes identity” is mostly metadata in the API server back
     - and others ...
   * Each controller watches 
     - resources in the API
-    - computes diffs between desired & actual
+    - computes `diff`s between desired & actual
     - executes actions by talking to API server
     - this leads to kubelet actions via watch events
 
 * **kube-scheduler**
 
-  * Runs scheduling algorithm: filters nodes, scores them, picks a node, updates Pod spec with `.spec.nodeName`.
+  * Runs scheduling algorithm: 
+    - filters nodes
+    - scores them
+    - picks a node
+    - updates Pod spec with `.spec.nodeName`.
   * Also runs as a process, communicates via the API.
 
 * **cloud-controller-manager**
