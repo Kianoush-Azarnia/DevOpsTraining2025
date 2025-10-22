@@ -137,12 +137,18 @@ The Node’s “Kubernetes identity” is mostly metadata in the API server back
 
 * **cloud-controller-manager**
 
-  * Talks to cloud provider APIs (create load balancers, manage routes, attach volumes).
+  * Talks to cloud provider APIs 
+    - create load balancers
+    - manage routes
+    - attach volumes
   * Uses controllers like Service/Node/Route that perform cloud-specific work.
 
 ## 2.c — How to read logs of each component
 
-There are two typical deployments: control-plane components as static pods (kubeadm style) or systemd-managed processes. How you read logs depends on that.
+There are two typical deployments: control-plane components 
+  - as static pods (kubeadm style)
+  - systemd-managed processes. 
+How you read logs depends on that.
 
 **If components run as static pods (common with kubeadm):**
 
@@ -154,6 +160,7 @@ There are two typical deployments: control-plane components as static pods (kube
 **If components run as systemd units (older or custom setups):**
 
 * `systemctl status kube-apiserver` and `journalctl -u kube-apiserver -f`.
+  - `systemctl` is the central tool to manage systemd services, including starting, stopping, restarting, enabling, and disabling services. [more](https://www.digitalocean.com/community/tutorials/how-to-use-systemctl-to-manage-systemd-services-and-units)
 * `journalctl -u kube-controller-manager -f`, `journalctl -u kube-scheduler -f`, `journalctl -u etcd -f`.
 
 **etcd logs:**
@@ -172,11 +179,20 @@ There are two typical deployments: control-plane components as static pods (kube
 
 ## 2.d — Which pods contain the audit log?
 
-* **Audit logs are produced by the kube-apiserver**. The apiserver writes audit events based on `--audit-policy-file` and `--audit-log-path`. So the kube-apiserver process (or pod) is the source of audit logs.
+* **Audit logs are produced by the kube-apiserver**. The apiserver writes audit events based on 
+  - `--audit-policy-file`
+  - `--audit-log-path`. 
+So the kube-apiserver process (or pod) is the source of audit logs.
 * **Where the logs actually reside depends on setup:**
 
-  * If apiserver is a static pod: its container stdout/err can be read with `kubectl logs -n kube-system kube-apiserver-<node>`; the audit log may be written to a file inside the apiserver container filesystem (if `--audit-log-path` points to a file path), which might be mounted to the host (e.g., hostPath) so the file is accessible on the host under `/var/log/kubernetes/audit.log` or similar.
-  * In many managed clusters, a logging agent (fluentd, filebeat) or a sidecar/daemonset collects apiserver logs and ships them elsewhere.
+  * If apiserver is a static pod: 
+    - its container stdout/err can be read with `kubectl logs -n kube-system kube-apiserver-<node>`; 
+    - if `--audit-log-path` points to a file path, the audit log may be written to a file inside the apiserver container filesystem, 
+    - if this file has been mounted to the host (e.g., hostPath) then the file is accessible on the host under `/var/log/kubernetes/audit.log` or similar.
+  * In many managed clusters
+    - a logging agent (fluentd, filebeat)
+    - a sidecar/daemonset 
+  collects apiserver logs and ships them elsewhere.
 * **Summary:** the apiserver (pod/process) produces audit records — where they end up (file on host, stdout, external system) depends on `--audit-log-path` and your logging configuration.
 
 ---
@@ -187,9 +203,13 @@ There are two typical deployments: control-plane components as static pods (kube
 
 **How it works (flow):**
 
-1. Controller watches resources (List + Watch) from the apiserver (etcd).
-2. When an object changes (or periodically), controller reconciles: reads desired state from the object’s spec and actual state (from API or node metrics).
-3. Controller issues changes by updating resources via the API (create/delete/update). For example, ReplicaSet controller ensures `.spec.replicas` matches number of Pod objects — if fewer, it creates Pod objects.
+1. Controller watches resources (`List` + `Watch`) from the apiserver (`etcd`).
+2. When an object changes (or periodically), controller reconciles: 
+  - reads desired state from the object’s `spec`
+  - reads the actual state (from `API` or node `metrics`)
+3. Controller issues changes by updating resources via the API (create/delete/update). For example:
+  - ReplicaSet controller ensures `.spec.replicas` matches number of Pod objects — if fewer, it creates Pod objects.
+  - More examples *ToDo*
 
 **Implementation & mapping to OS-level:**
 
@@ -1739,4 +1759,400 @@ kube-apiserver is the central, stateful web server of Kubernetes that validates,
 
 15 — etcd next?
 That’s the persistent memory of Kubernetes — where all your Pods, Secrets, ConfigMaps, and state actually live as serialized files — and it ties directly to the “real Linux files and processes” your senior expects you to understand.
+
+Webhook in Kubernetes is a mechanism that allows external systems to intercept and modify API requests. It's like a callback system that lets you inject custom logic into Kubernetes operations.
+
+What Webhooks Manage:
+Webhooks don't "manage" objects but rather intercept and validate/modify API requests for objects:
+
+1. Validating Admission Webhooks
+yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: pod-policy-validator
+webhooks:
+- name: pod-policy.validator.example.com
+  clientConfig:
+    service:
+      name: policy-validator-service
+      namespace: webhook-system
+      path: /validate-pods
+      port: 443
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1"]
+  failurePolicy: Fail
+  sideEffects: None
+2. Mutating Admission Webhooks
+yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: pod-injector
+webhooks:
+- name: pod-injector.mutator.example.com
+  clientConfig:
+    service:
+      name: pod-injector-service
+      namespace: webhook-system
+      path: /mutate-pods
+      port: 443
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1"]
+  failurePolicy: Fail
+  sideEffects: None
+Objects That RECONCILE Webhooks (Webhook Servers):
+Webhooks need external webhook servers to process the requests:
+
+1. Custom Webhook Server Deployment
+yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-webhook-server
+  namespace: webhook-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: policy-webhook
+  template:
+    metadata:
+      labels:
+        app: policy-webhook
+    spec:
+      containers:
+      - name: webhook-server
+        image: my-org/policy-webhook:v1.0
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: certs
+          mountPath: /etc/webhook/certs
+          readOnly: true
+      volumes:
+      - name: certs
+        secret:
+          secretName: webhook-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: policy-webhook-service
+  namespace: webhook-system
+spec:
+  selector:
+    app: policy-webhook
+  ports:
+  - port: 443
+    targetPort: 8443
+2. Service Mesh Webhook (Istio)
+yaml
+# Istio automatically creates mutating webhooks for sidecar injection
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: istio-sidecar-injector
+  labels:
+    app: sidecar-injector
+webhooks:
+- name: sidecar-injector.istio.io
+  clientConfig:
+    service:
+      name: istiod
+      namespace: istio-system
+      path: "/inject"
+      port: 443
+  rules:
+  - operations: [ "CREATE" ]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+3. Cert-Manager Webhook
+yaml
+# Cert-manager uses webhooks for certificate validation
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: cert-manager-webhook
+webhooks:
+- name: webhook.cert-manager.io
+  clientConfig:
+    service:
+      name: cert-manager-webhook
+      namespace: cert-manager
+      path: /validate
+      port: 443
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["cert-manager.io"]
+    apiVersions: ["v1"]
+    resources: ["certificates", "issuers"]
+When to Use Webhooks:
+Use Case 1: Security Policies & Validation
+yaml
+# ValidatingWebhookConfiguration for security policies
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: security-policy-validator
+webhooks:
+- name: security.validator.example.com
+  clientConfig:
+    url: https://security-webhook.example.com/validate
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  # This webhook could reject pods that:
+  # - Run as root user
+  # - Use privileged containers
+  # - Mount host paths
+  # - Don't have resource limits
+Use Case 2: Automatic Sidecar Injection
+yaml
+# MutatingWebhookConfiguration for automatic logging sidecar
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: log-sidecar-injector
+webhooks:
+- name: log-injector.mutator.example.com
+  clientConfig:
+    service:
+      name: log-injector-service
+      namespace: default
+      path: /inject-log-sidecar
+      port: 443
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  # This webhook automatically adds:
+  # - Fluentd sidecar container
+  # - Volume mounts for logs
+  # - Environment variables
+Use Case 3: Defaulting Values
+yaml
+# MutatingWebhookConfiguration for setting defaults
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: namespace-defaults
+webhooks:
+- name: namespace-defaults.mutator.example.com
+  clientConfig:
+    service:
+      name: namespace-defaults-service
+      namespace: webhook-system
+      path: /default-namespace
+      port: 443
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["namespaces"]
+  # This webhook automatically adds:
+  # - Default resource quotas
+  # - Default network policies
+  # - Default labels and annotations
+Use Case 4: Custom Resource Validation
+yaml
+# ValidatingWebhookConfiguration for custom resources
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: custom-resource-validator
+webhooks:
+- name: custom.validator.example.com
+  clientConfig:
+    service:
+      name: custom-validator-service
+      namespace: webhook-system
+      path: /validate-custom-resources
+      port: 443
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["mycompany.com"]
+    apiVersions: ["v1"]
+    resources: ["mycustomresources"]
+Webhook Flow - How It Works:
+text
+User creates Pod
+    ↓
+Kubernetes API Server receives request
+    ↓
+Calls Mutating Webhooks (if any)
+    ↓ ← Your webhook server can modify the Pod
+Calls Validating Webhooks (if any)  
+    ↓ ← Your webhook server can accept/reject the Pod
+Request is processed (created/rejected)
+Complete Example: Pod Security Webhook
+1. Webhook Server Deployment
+yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-webhook
+  namespace: webhook-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: security-webhook
+  template:
+    metadata:
+      labels:
+        app: security-webhook
+    spec:
+      containers:
+      - name: webhook
+        image: my-org/security-webhook:v1.0
+        ports:
+        - containerPort: 8443
+        env:
+        - name: TLS_CERT_FILE
+          value: /etc/webhook/certs/tls.crt
+        - name: TLS_KEY_FILE
+          value: /etc/webhook/certs/tls.key
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /etc/webhook/certs
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: webhook-tls-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: security-webhook-service
+  namespace: webhook-system
+spec:
+  selector:
+    app: security-webhook
+  ports:
+  - port: 443
+    targetPort: 8443
+2. Validating Webhook Configuration
+yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: security-policy-webhook
+webhooks:
+- name: security-policy.validator.example.com
+  clientConfig:
+    service:
+      name: security-webhook-service
+      namespace: webhook-system
+      path: /validate
+      port: 443
+    caBundle: <base64-encoded-ca-bundle>
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  failurePolicy: Fail
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 5
+3. Example Webhook Server Logic (Python)
+python
+from flask import Flask, request, jsonify
+import base64
+import json
+
+app = Flask(__name__)
+
+@app.route('/validate', methods=['POST'])
+def validate_pod():
+    admission_request = request.json
+    pod = admission_request['request']['object']
+    
+    # Check security policies
+    violations = []
+    
+    # Reject privileged containers
+    for container in pod.get('spec', {}).get('containers', []):
+        security_context = container.get('securityContext', {})
+        if security_context.get('privileged'):
+            violations.append(f"Container {container['name']} is privileged")
+    
+    # Check if pod should be rejected
+    if violations:
+        return jsonify({
+            "response": {
+                "uid": admission_request['request']['uid'],
+                "allowed": False,
+                "status": {"message": "; ".join(violations)}
+            }
+        })
+    
+    # Allow the pod
+    return jsonify({
+        "response": {
+            "uid": admission_request['request']['uid'],
+            "allowed": True
+        }
+    })
+Types of Webhooks:
+1. Validating Admission Webhooks
+Purpose: Accept or reject requests
+
+Use case: Security policies, compliance checks
+
+Cannot modify the object
+
+2. Mutating Admission Webhooks
+Purpose: Modify objects before persistence
+
+Use case: Default values, sidecar injection
+
+Can modify the object
+
+3. Conversion Webhooks
+Purpose: Convert between API versions
+
+Use case: Custom resource version conversion
+
+When NOT to Use Webhooks:
+Simple validation that can be done with OpenAPI schema
+
+Performance-critical operations (adds latency)
+
+When webhook availability could block cluster operations
+
+For basic defaults that can be set with MutatingAdmissionWebhook
+
+Best Practices:
+1. Failure Policy
+yaml
+failurePolicy: Fail  # Reject if webhook fails
+# OR
+failurePolicy: Ignore  # Allow if webhook fails
+2. Timeout Settings
+yaml
+timeoutSeconds: 5  # Don't block indefinitely
+3. Side Effects
+yaml
+sideEffects: None  # Webhook has no side effects
+# OR  
+sideEffects: NoneOnDryRun  # No side effects on dry-run
+In Summary:
+Webhooks in Kubernetes are interceptors that allow custom external logic to validate or mutate API requests. They're like bouncers at a club (validating) or stylists (mutating) that can reject or modify requests before they're processed.
+
+Webhook Servers are the actual applications that implement the validation/mutation logic, while Webhook Configurations tell Kubernetes when and where to call these servers!
 
