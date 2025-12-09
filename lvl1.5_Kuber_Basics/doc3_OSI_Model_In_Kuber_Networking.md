@@ -82,11 +82,11 @@ spec:
     protocol: TCP
     port: 25565           # External port
     targetPort: 25565     # Pod port
-# This service:
-# - Only sees: IP packets on port 25565
-# - Doesn't care: What data is being sent
-# - Can't route based on: HTTP headers, URLs, hostnames
-L4 Load Balancing:
+### This service:
+ - Only sees: IP packets on port 25565
+ - Doesn't care: What data is being sent
+ - Can't route based on: HTTP headers, URLs, hostnames
+# L4 Load Balancing:
 
 Round-robin based on IP:PORT
 
@@ -94,7 +94,7 @@ No understanding of application content
 
 Works for any TCP/UDP protocol (databases, games, custom protocols)
 
-Layer 7 (Application Layer) Characteristics:
+## Layer 7 (Application Layer) Characteristics:
 yaml
 # L7 Ingress Example
 apiVersion: networking.k8s.io/v1
@@ -122,7 +122,7 @@ spec:
             name: v2-api
             port:
               number: 8080
-L7 Load Balancing:
+## L7 Load Balancing:
 
 Routes based on HTTP headers, URLs, cookies
 
@@ -147,10 +147,10 @@ spec:
   ports:
   - port: 5432
     targetPort: 5432
-# No Ingress needed - databases speak TCP, not HTTP
+## No Ingress needed - databases speak TCP, not HTTP
 Web API (L7 - HTTP)
 yaml
-# Web API needs L7 routing
+## Web API needs L7 routing
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -176,7 +176,7 @@ spec:
               number: 8080
 Mixed Protocol Application:
 yaml
-# Web frontend (L7)
+## Web frontend (L7)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -193,7 +193,7 @@ spec:
             port: 80
 
 ---
-# Database (L4)
+## Database (L4)
 apiVersion: v1
 kind: Service
 metadata:
@@ -207,7 +207,7 @@ spec:
     app: database
 
 ---
-# Redis cache (L4)
+## Redis cache (L4)
 apiVersion: v1
 kind: Service
 metadata:
